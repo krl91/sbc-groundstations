@@ -1,0 +1,100 @@
+name: Build RunCam Wifilink
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/runcam_wifilink.yml"
+      - "Config.in"
+      - "external.mk"
+      - "build.sh"
+      - "configs/runcam_wifilink_defconfig"
+      - "board/**"
+      - "package/**"
+  push:
+    branches:
+      - master
+      - podman-build-support
+    paths:
+      - ".github/workflows/runcam_wifilink.yml"
+      - "Config.in"
+      - "external.mk"
+      - "build.sh"
+      - "configs/runcam_wifilink_defconfig"
+      - "board/**"
+      - "package/**"
+
+concurrency:
+  group: runcam-wifilink-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-runcam-wifilink:
+    name: Build runcam_wifilink image
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Display runner resources
+        run: |
+          nproc
+          free -h
+          df -hT
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            binfmt-support \
+            cpio \
+            file \
+            qemu-user-static \
+            rsync \
+            unzip \
+            wget
+
+      - name: Prepare workspace
+        run: |
+          sudo mkdir -p /mnt/workspace
+          sudo chown "$USER:$USER" /mnt/workspace
+          rsync -a --delete "$GITHUB_WORKSPACE/" /mnt/workspace/
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/ccache-runcam-wifilink
+          key: runcam-wifilink-ccache-${{ runner.os }}-${{ github.ref_name }}
+          restore-keys: |
+            runcam-wifilink-ccache-${{ runner.os }}-
+
+      - name: Build image
+        working-directory: /mnt/workspace
+        env:
+          DEFCONFIG: runcam_wifilink_defconfig
+          BUILDROOT_JLEVEL: "2"
+          BR2_CCACHE_DIR: /tmp/ccache-runcam-wifilink
+          FORCE_UNSAFE_CONFIGURE: "1"
+        run: |
+          mkdir -p "$BR2_CCACHE_DIR"
+          ./build.sh
+
+      - name: Upload RunCam Wifilink images
+        uses: actions/upload-artifact@v6
+        with:
+          name: runcam-wifilink-images-${{ github.sha }}
+          path: |
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink_sdcard.img
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink_boot.scr
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink_u-boot.bin
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink_emmc_bootloader.img
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink_rootfs.squashfs
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/runcam_wifilink.tar.gz
+            /mnt/workspace/output/runcam_wifilink_defconfig/images/*.md5sum
+          if-no-files-found: error
+          retention-days: 14
