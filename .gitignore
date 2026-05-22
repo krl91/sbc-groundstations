@@ -1,3 +1,6 @@
 buildroot/
+buildroot-*/
+buildroot-*.tar.gz
 output/
 board/local/
+build-*.log

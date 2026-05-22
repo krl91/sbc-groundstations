@@ -94,7 +94,72 @@ Once flashed, the Buildroot image can update itself via several ways:
   - Serial connection
   - Network connection (SBC is on `192.168.5.1`)
 
-# Custom Build (Linux/WSL2)
+# Custom Build with Podman (macOS/Linux)
+
+Building directly on macOS is not recommended because Buildroot and some
+post-image scripts expect a Linux userspace. The recommended path is to build
+inside a Linux container with Podman.
+
+On macOS, create and start a Podman Linux VM first:
+
+```
+brew install podman
+podman machine init --cpus 6 --memory 8192 --disk-size 50
+podman machine start
+```
+
+Then build one of the supported images:
+
+```
+./build-podman.sh runcam_wifilink_defconfig
+./build-podman.sh openipc_bonnet_defconfig
+./build-podman.sh radxa_zero3_defconfig
+./build-podman.sh emax_wyvern-link_defconfig
+```
+
+The wrapper builds a Debian-based build image, mounts this repository at
+`/host-src`, copies it into a Podman Linux volume at `/src`, and runs the
+existing `build.sh` there. Buildroot sources and the intermediate Buildroot
+output live in Podman Linux volumes, which avoids macOS filesystem permission
+issues. Final images are copied back to `output/<defconfig>/images`.
+
+Useful examples:
+
+```
+./build-podman.sh runcam_wifilink_defconfig menuconfig
+./build-podman.sh --rebuild-image openipc_bonnet_defconfig
+./build-podman.sh --jlevel 1 runcam_wifilink_defconfig
+./build-podman.sh --shell
+```
+
+The Podman wrapper defaults to `BUILDROOT_JLEVEL=2` to avoid out-of-memory
+failures while building large host packages such as LLVM/Clang in an 8 GB VM.
+Use `--jlevel 1` if the VM still runs out of memory.
+
+To reset the Linux-side build cache:
+
+```
+podman volume rm openipc-sbc-gs-src openipc-sbc-gs-output
+```
+
+If Podman reports `No space left on device`, verify the actual VM filesystem:
+
+```
+podman machine ssh podman-machine-default df -h /
+```
+
+If it still shows around 20G after setting a larger disk, grow the VM partition
+and filesystem:
+
+```
+podman machine ssh podman-machine-default sudo growpart /dev/vda 4
+podman machine ssh podman-machine-default sudo xfs_growfs /
+podman machine ssh podman-machine-default df -h /
+```
+
+If resizing fails, recreate the Podman machine with a larger disk.
+
+# Custom Build (Native Linux/WSL2)
 
 Custom builds rely on Buildroot [dependencies](https://buildroot.org/downloads/manual/manual.html#requirement).
 

@@ -92,6 +92,15 @@ build_project() {
     then
         echo "Running defconfig: $DEFCONFIG"
         $build_cmd "$DEFCONFIG"
+        if [ -n "${BUILDROOT_JLEVEL:-}" ]; then
+            echo "Setting Buildroot package parallelism: BR2_JLEVEL=$BUILDROOT_JLEVEL"
+            if grep -q '^BR2_JLEVEL=' "$OUTPUT_DIR/$DEFCONFIG/.config"; then
+                sed -i "s/^BR2_JLEVEL=.*/BR2_JLEVEL=$BUILDROOT_JLEVEL/" "$OUTPUT_DIR/$DEFCONFIG/.config"
+            else
+                echo "BR2_JLEVEL=$BUILDROOT_JLEVEL" >> "$OUTPUT_DIR/$DEFCONFIG/.config"
+            fi
+            $build_cmd olddefconfig
+        fi
     fi
     
     # Run make
