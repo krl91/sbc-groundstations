@@ -43,3 +43,11 @@ define LIBCLC_DELETE_TARGET
 	rm -rf $(TARGET_DIR)/usr/share/clc
 endef
 LIBCLC_POST_INSTALL_TARGET_HOOKS += LIBCLC_DELETE_TARGET
+
+# lrzsz 0.12.21rc uses strtol() from xstrtol.c without including stdlib.h.
+# Newer toolchains treat the implicit declaration as an error.
+define LRZSZ_FIX_MISSING_STDLIB
+	grep -q 'OpenIPC: ensure strtol prototype' $(@D)/lib/xstrtol.c || \
+		sed -i '/#ifdef STDC_HEADERS/i /* OpenIPC: ensure strtol prototype with modern toolchains. */\n#include <stdlib.h>\n' $(@D)/lib/xstrtol.c
+endef
+LRZSZ_POST_PATCH_HOOKS += LRZSZ_FIX_MISSING_STDLIB

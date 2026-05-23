@@ -34,7 +34,7 @@ jobs:
   build-runcam-wifilink:
     name: Build runcam_wifilink image
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 355
 
     steps:
       - name: Checkout source
@@ -61,15 +61,25 @@ jobs:
 
       - name: Prepare workspace
         run: |
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+          echo "CACHE_DATE=$(date +%m)" >> "$GITHUB_ENV"
           sudo mkdir -p /mnt/workspace
           sudo chown "$USER:$USER" /mnt/workspace
           rsync -a --delete "$GITHUB_WORKSPACE/" /mnt/workspace/
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v5
+        with:
+          path: /mnt/workspace/buildroot/dl
+          key: runcam-wifilink-dl-${{ env.CACHE_DATE }}
+          restore-keys: |
+            runcam-wifilink-dl-
 
       - name: Cache ccache
         uses: actions/cache@v5
         with:
           path: /tmp/ccache-runcam-wifilink
-          key: runcam-wifilink-ccache-${{ runner.os }}-${{ github.ref_name }}
+          key: runcam-wifilink-ccache-${{ runner.os }}-${{ env.CACHE_DATE }}
           restore-keys: |
             runcam-wifilink-ccache-${{ runner.os }}-
 
@@ -77,8 +87,9 @@ jobs:
         working-directory: /mnt/workspace
         env:
           DEFCONFIG: runcam_wifilink_defconfig
-          BUILDROOT_JLEVEL: "2"
+          BUILDROOT_JLEVEL: "4"
           BR2_CCACHE_DIR: /tmp/ccache-runcam-wifilink
+          CI: "true"
           FORCE_UNSAFE_CONFIGURE: "1"
         run: |
           mkdir -p "$BR2_CCACHE_DIR"
