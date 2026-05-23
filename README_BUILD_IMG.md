@@ -45,6 +45,13 @@ From the repository root:
 The wrapper builds inside Podman Linux volumes and copies final artifacts back
 to the host.
 
+At the end of a successful build, the log should contain:
+
+```text
+Build completed successfully!
+Copied final images to /artifacts/runcam_wifilink_defconfig/images
+```
+
 Final images are written to:
 
 ```sh
@@ -54,14 +61,33 @@ output/runcam_wifilink_defconfig/images/
 Expected files include:
 
 ```text
-runcam_wifilink_sdcard.img
-runcam_wifilink_boot.scr
-runcam_wifilink_u-boot.bin
-runcam_wifilink_emmc_bootloader.img
-runcam_wifilink_rootfs.squashfs
-runcam_wifilink.tar.gz
-*.md5sum
+runcam_wifilink_sdcard.img          complete SD card image
+runcam_wifilink_boot.scr            boot script
+runcam_wifilink_u-boot.bin          U-Boot image
+runcam_wifilink_emmc_bootloader.img eMMC bootloader image
+runcam_wifilink_rootfs.squashfs     root filesystem
+runcam_wifilink.tar.gz              rootfs, U-Boot, and checksums archive
+*.md5sum                            checksums
 ```
+
+For a normal SD card flash, use:
+
+```text
+output/runcam_wifilink_defconfig/images/runcam_wifilink_sdcard.img
+```
+
+On macOS, identify the target disk carefully before flashing:
+
+```sh
+diskutil list
+diskutil unmountDisk /dev/diskN
+sudo dd if=output/runcam_wifilink_defconfig/images/runcam_wifilink_sdcard.img of=/dev/rdiskN bs=4m status=progress
+sync
+diskutil eject /dev/diskN
+```
+
+Replace `diskN` with the SD card device. Using the wrong device will overwrite
+that disk.
 
 ## Memory Tuning
 
@@ -107,6 +133,14 @@ openipc-sbc-gs-output
 
 Simple changes to overlays or scripts, such as `gsmenu.sh`, should rebuild much
 faster than the initial full build.
+
+If a package failed and needs to be rebuilt cleanly, run the corresponding
+Buildroot clean target through the wrapper, then start the build again. Example:
+
+```sh
+./build-podman.sh runcam_wifilink_defconfig lrzsz-dirclean
+./build-podman.sh runcam_wifilink_defconfig 2>&1 | tee build-runcam.log
+```
 
 Do not remove these volumes unless you want a clean rebuild:
 
@@ -182,6 +216,23 @@ This means Buildroot failed before generating final images. Check the last error
 tail -80 build-runcam.log
 ```
 
+### lrzsz Fails on strtol
+
+Symptoms:
+
+```text
+xstrtol.h:11:19: error: implicit declaration of function 'strtol'
+```
+
+The repository includes a Buildroot hook in `external.mk` that patches
+`lrzsz-0.12.21rc` after extraction. If the package was already extracted before
+this fix, clean only this package and rerun the build:
+
+```sh
+./build-podman.sh runcam_wifilink_defconfig lrzsz-dirclean
+./build-podman.sh runcam_wifilink_defconfig 2>&1 | tee build-runcam.log
+```
+
 ## GitHub Actions
 
 This repository also contains a workflow dedicated to RunCam Wifilink:
@@ -192,3 +243,12 @@ This repository also contains a workflow dedicated to RunCam Wifilink:
 
 It can be started manually from the GitHub Actions tab through
 `workflow_dispatch`.
+
+GitHub hosted runners have a hard 6 hour job limit. A cold RunCam build may hit
+that limit before it can save any cache. The workflow caches Buildroot downloads
+and ccache after a successful job, so the first successful run is the one that
+initializes the GitHub cache for later runs.
+
+The GitHub cache is separate from the local Podman volumes. A successful local
+Podman build does not populate the GitHub Actions cache, and a fork cannot
+directly reuse the private cache from the upstream repository.
