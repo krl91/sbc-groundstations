@@ -1,5 +1,5 @@
 #!/bin/sh
-set -o pipefail
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Configuration
@@ -36,12 +36,16 @@ mkdir -p "$CACHE_DIR"
 emit_values()     { printf '\x1e'"$1"; }
 emit_values_cmd() { printf '\x1e'; "$@"; }
 
+trim_trailing_newline() {
+    awk 'NR > 1 { printf "\n" } { printf "%s", $0 }'
+}
+
 # Refresh cached config files from the air unit (10s TTL)
 refresh_cache() {
     local current_time=$(date +%s)
     local last_refresh=$((current_time - CACHE_TTL))
 
-    if [[ ! -f "$CACHE_DIR/last_refresh" ]] || [[ $(cat "$CACHE_DIR/last_refresh") -lt $last_refresh ]]; then
+    if [ ! -f "$CACHE_DIR/last_refresh" ] || [ "$(cat "$CACHE_DIR/last_refresh" 2>/dev/null || echo 0)" -lt "$last_refresh" ]; then
         files="$MAJESTIC_YAML $WFB_YAML $ALINK_CONF $TXPROFILES_CONF $AALINK_CONF"
         $SSH "tar cf - $files" 2>/dev/null | tar xf - --strip-components 1 -C /tmp/gsmenu_cache/ 2>/dev/null
         $SSH "find /etc/sensors/ -type f -name \"*\$(ipcinfo -s)*.bin\"" | sed 's/^\/etc\/sensors\///' | sed 's/\.bin$//' > /tmp/gsmenu_cache/sensor.txt
@@ -71,7 +75,7 @@ get_aalink_value() {
 
 # Helper: list available wifi channels (used by air and gs)
 list_wifi_channels() {
-    iw list | grep MHz | grep -v disabled | grep -v "radar detection" | grep \* | tr -d '[]' | awk '{print $4 " (" $2 " " $3 ")"}' | grep '^[1-9]' | sort -n | uniq | head -c -1
+    iw list | grep MHz | grep -v disabled | grep -v "radar detection" | grep \* | tr -d '[]' | awk '{print $4 " (" $2 " " $3 ")"}' | grep '^[1-9]' | sort -n | uniq | trim_trailing_newline
 }
 
 # Add or update a network stanza in wpa_supplicant.conf.
@@ -295,7 +299,9 @@ case "$@" in
         emit_values "disabled\n50\n60"
         ;;
     "get air camera sensor_file")
-        basename -s .bin $(basename $(get_majestic_value '.isp.sensorConfig'))
+        sensor_config=$(get_majestic_value '.isp.sensorConfig')
+        sensor_file=${sensor_config##*/}
+        printf '%s\n' "${sensor_file%.bin}"
         emit_values "$(cat /tmp/gsmenu_cache/sensor.txt)"
         ;;
     "get air camera fpv_enable")
@@ -355,9 +361,9 @@ case "$@" in
         ;;
     "set air camera rec_enable"*)
         if [ "$5" = "on" ]; then
-            $SSH 'cli -s .records.enable true && killall -1 majestic'
+            $SSH 'cli -s .records.enabled true && killall -1 majestic'
         else
-            $SSH 'cli -s .records.enable false && killall -1 majestic'
+            $SSH 'cli -s .records.enabled false && killall -1 majestic'
         fi
         ;;
     "set air camera rec_split"*)
@@ -389,9 +395,9 @@ case "$@" in
 # ── Air: Telemetry ───────────────────────────────────────────────────────────
 
     "get air telemetry serial")
-        if [ $AIR_FIRMWARE_TYPE = "wfb" ]; then
+        if [ "$AIR_FIRMWARE_TYPE" = "wfb" ]; then
             $SSH wifibroadcast cli -g .telemetry.serial
-        elif [ $AIR_FIRMWARE_TYPE = "apfpv" ]; then
+        elif [ "$AIR_FIRMWARE_TYPE" = "apfpv" ]; then
             tty=$($SSH "fw_printenv -n msposd_tty")
             if [ ! -z $tty ]; then
                 basename "$tty"
@@ -419,10 +425,10 @@ case "$@" in
         else
           $SSH "sed -i 's/^#console::respawn:\/sbin\/getty -L console 0 vt100/console::respawn:\/sbin\/getty -L console 0 vt100/' /etc/inittab ; kill -HUP 1"
         fi
-        if [ $AIR_FIRMWARE_TYPE = "wfb" ]; then
+        if [ "$AIR_FIRMWARE_TYPE" = "wfb" ]; then
             $SSH wifibroadcast cli -s .telemetry.serial $5
             $SSH "(wifibroadcast stop ;wifibroadcast stop; sleep 1;  wifibroadcast start) >/dev/null 2>&1 &"
-        elif [ $AIR_FIRMWARE_TYPE = "apfpv" ]; then
+        elif [ "$AIR_FIRMWARE_TYPE" = "apfpv" ]; then
             $SSH "fw_setenv msposd_tty /dev/$5; /etc/init.d/S99msposd stop ; /etc/init.d/S99msposd stop ; sleep 1; /etc/init.d/S99msposd start"
         fi
         ;;
@@ -574,7 +580,7 @@ case "$@" in
 
     "get gs wfbng gs_channel")
         channel=$(grep wifi_channel /etc/wifibroadcast.cfg | cut -d ' ' -f 3)
-        iw list | grep "\[$channel\]" | tr -d '[]' | awk '{print $4 " (" $2 " " $3 ")"}' | sort -n | uniq | head -c -1
+        iw list | grep "\[$channel\]" | tr -d '[]' | awk '{print $4 " (" $2 " " $3 ")"}' | sort -n | uniq | trim_trailing_newline
         emit_values_cmd list_wifi_channels
         ;;
     "get gs wfbng bandwidth")
@@ -586,9 +592,9 @@ case "$@" in
         if [ -z "$wifi_txpower" ]; then
             echo "50"
         else
-            read first_card first_card_power < <(
-                echo "$wifi_txpower" | cut -d = -f 2 | jq -r '"\(to_entries[0].key) \(to_entries[0].value)"'
-            )
+            first_card_power_pair=$(echo "$wifi_txpower" | cut -d = -f 2 | jq -r '"\(to_entries[0].key) \(to_entries[0].value)"')
+            first_card=${first_card_power_pair%% *}
+            first_card_power=${first_card_power_pair#* }
             first_card_type=$(udevadm info /sys/class/net/${first_card} | grep -E 'ID_USB_DRIVER=(rtl88xxau_wfb|rtl88x2eu|rtl88x2cu)'| cut -d = -f2)
             case "$first_card_type" in
             "rtl88xxau_wfb") min_phy_txpower=-1000; max_phy_txpower=-3000 ;;
@@ -612,7 +618,7 @@ case "$@" in
 
     "set gs wfbng gs_channel"*)
         channel=$(echo $5 | awk '{print $1}')
-        if [ "$GSMENU_VTX_DETECTED" -eq "1" ]; then
+        if [ "${GSMENU_VTX_DETECTED:-0}" -eq "1" ]; then
             $SSH wifibroadcast cli -s .wireless.channel $channel
             $SSH "(wifibroadcast stop ;wifibroadcast stop; sleep 1;  wifibroadcast start) >/dev/null 2>&1 &"
         fi
@@ -683,7 +689,7 @@ case "$@" in
     "get gs system resolution")
         drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".crtcs[0].mode| .name + "@" + (.vrefresh|tostring)'
         printf '\x1e'
-        drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".connectors[1].modes[] | select(.name | contains("i") | not) | .name + "@" + (.vrefresh|tostring)' | sort | uniq | head -c -1
+        drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".connectors[1].modes[] | select(.name | contains("i") | not) | .name + "@" + (.vrefresh|tostring)' | sort | uniq | trim_trailing_newline
         ;;
     "get gs system video_scale")
         . /etc/default/pixelpilot
@@ -861,7 +867,7 @@ EOF
         ;;
 
     "set gs apfpv ssid"*)
-        if [ "$GSMENU_VTX_DETECTED" -eq "1" ]; then
+        if [ "${GSMENU_VTX_DETECTED:-0}" -eq "1" ]; then
             $SSH 'fw_setenv wlanssid "'$5'"'
             $SSH '(hostapd_cli -i wlan0 set ssid "'$5'"; hostapd_cli -i wlan0 reload)  >/dev/null 2>&1 &'
         fi
@@ -878,7 +884,7 @@ EOF
         done
         ;;
     "set gs apfpv password"*)
-        if [ "$GSMENU_VTX_DETECTED" -eq "1" ]; then
+        if [ "${GSMENU_VTX_DETECTED:-0}" -eq "1" ]; then
             $SSH 'fw_setenv wlanpass "'$5'"'
             $SSH '(hostapd_cli -i wlan0 set wpa_passphrase "'$5'"; hostapd_cli -i wlan0 reload)  >/dev/null 2>&1 &'
         fi
@@ -895,7 +901,7 @@ EOF
         done
         ;;
     "set gs apfpv wlx"*)
-        if [ $5 = "on" ]; then
+        if [ "$5" = "on" ]; then
             sed -i "s/^#auto/auto/" /etc/network/interfaces.d/$4
             ifup $4
         else
@@ -1094,7 +1100,7 @@ EOF
     "get gs main Disk")
         df -h /media/dvr | awk 'NR==2 {print $2, $4, $5}' | while read -r size avail pcent
         do
-            echo -e "\n   Size: $size\n   Available: $avail\n   Pct: $pcent\c"
+            printf '\n   Size: %s\n   Available: %s\n   Pct: %s' "$size" "$avail" "$pcent"
             exit 0
         done
         ;;

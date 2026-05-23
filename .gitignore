@@ -4,3 +4,6 @@ buildroot-*.tar.gz
 output/
 board/local/
 build-*.log
+cache-backups/
+.DS_Store
+output_img_*/

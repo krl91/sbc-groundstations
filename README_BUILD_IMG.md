@@ -134,6 +134,62 @@ openipc-sbc-gs-output
 Simple changes to overlays or scripts, such as `gsmenu.sh`, should rebuild much
 faster than the initial full build.
 
+## Fast Incremental Image Update
+
+After a successful full build, do not clean the Buildroot output volume for
+small changes. Reuse the existing cache and rebuild only the affected package
+before regenerating the final images.
+
+For example, after changing `package/pixelpilot/files/gsmenu.sh`:
+
+```sh
+PODMAN_MIN_FREE_MB=15000 ./build-podman.sh --jlevel 6 runcam_wifilink_defconfig pixelpilot-reinstall
+PODMAN_MIN_FREE_MB=15000 ./build-podman.sh --jlevel 6 runcam_wifilink_defconfig
+```
+
+The first command forces Buildroot to reinstall the already-built `pixelpilot`
+package into the target root filesystem. This copies the updated
+`/usr/bin/gsmenu.sh` without rebuilding the whole dependency graph.
+
+The second command runs the normal `all` target. With the cache already warm,
+Buildroot should skip package compilation and go directly to finalizing the
+target, regenerating:
+
+```text
+rootfs.squashfs
+sdcard.img
+runcam_wifilink_sdcard.img
+runcam_wifilink.tar.gz
+```
+
+Use `--jlevel 6` only if the Podman VM has enough RAM. If the VM has 8 GB and
+starts swapping or killing compiler processes, use `--jlevel 2` or `--jlevel 1`.
+
+The lower `PODMAN_MIN_FREE_MB=15000` threshold is only for incremental rebuilds.
+A cold/full build should keep the default free-space check because Buildroot can
+temporarily need much more disk space.
+
+To verify that the modified file is installed in the Buildroot target:
+
+```sh
+podman run --rm \
+  -v "$PWD:/host-src:ro" \
+  -v openipc-sbc-gs-output:/build-output \
+  openipc-sbc-gs-build:debian12 \
+  bash -lc 'sha256sum /host-src/package/pixelpilot/files/gsmenu.sh /build-output/runcam_wifilink_defconfig/target/usr/bin/gsmenu.sh'
+```
+
+Both hashes should match.
+
+To verify the file inside the generated `rootfs.squashfs`:
+
+```sh
+podman run --rm \
+  -v openipc-sbc-gs-output:/build-output \
+  openipc-sbc-gs-build:debian12 \
+  bash -lc '/build-output/runcam_wifilink_defconfig/host/bin/unsquashfs -cat /build-output/runcam_wifilink_defconfig/images/rootfs.squashfs usr/bin/gsmenu.sh | sha256sum'
+```
+
 If a package failed and needs to be rebuilt cleanly, run the corresponding
 Buildroot clean target through the wrapper, then start the build again. Example:
 
@@ -147,6 +203,67 @@ Do not remove these volumes unless you want a clean rebuild:
 ```sh
 podman volume rm openipc-sbc-gs-src openipc-sbc-gs-output
 ```
+
+## Backup And Restore The Local Build Cache
+
+The fast local rebuild cache lives inside the Podman machine, in these named
+volumes:
+
+```text
+openipc-sbc-gs-src
+openipc-sbc-gs-output
+```
+
+If the Podman machine is deleted, corrupted, or recreated, these volumes are
+lost. Create a backup after a successful full build so it can be restored later.
+
+Show current cache size:
+
+```sh
+support/podman/cache.sh info
+```
+
+Create a backup archive on the host:
+
+```sh
+support/podman/cache.sh backup
+```
+
+By default, archives are written to:
+
+```text
+cache-backups/openipc-sbc-gs-cache-YYYYmmdd-HHMMSS.tar.zst
+```
+
+For safer storage, write the archive to an external disk:
+
+```sh
+support/podman/cache.sh backup /Volumes/External/openipc-sbc-gs-cache.tar.zst
+```
+
+The backup command also writes a matching SHA256 file:
+
+```text
+openipc-sbc-gs-cache.tar.zst.sha256
+```
+
+Restore after recreating the Podman machine:
+
+```sh
+podman machine init --cpus 6 --memory 8192 --disk-size 50
+podman machine start
+support/podman/cache.sh restore /Volumes/External/openipc-sbc-gs-cache.tar.zst
+```
+
+Then run an incremental build normally:
+
+```sh
+PODMAN_MIN_FREE_MB=15000 ./build-podman.sh --jlevel 6 runcam_wifilink_defconfig
+```
+
+Important: this mechanism is a proactive backup. If the Podman VM is already so
+broken that `podman` cannot read its volumes anymore, the cache can only be
+restored from an archive that was created earlier.
 
 ## Common Failures
 

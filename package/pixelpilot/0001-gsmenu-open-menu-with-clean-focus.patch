@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OpenIPC SBC Groundstations <openipc-sbc-gs@example.invalid>
+Date: Sat, 23 May 2026 12:20:00 +0200
+Subject: [PATCH] gsmenu: open menu with clean focus state
+
+The GPIO/keypad read callback currently opens the GSMenu after preparing
+the key event for LVGL. When the menu is inactive, the first non-Enter key
+is therefore both the menu-open trigger and a normal LVGL key event. On
+some devices this leaves the menu screen active without a stable focused
+object/redraw state, so the user has to press up/down before the next left
+press makes the menu appear.
+
+Treat the first non-Enter key while the menu is inactive as an open-menu
+action only. Switch to the menu screen, bind the keypad input device to the
+main menu group, focus an initial object if needed, invalidate the screen,
+and consume the opening key instead of forwarding it to LVGL.
+
+Signed-off-by: OpenIPC SBC Groundstations <openipc-sbc-gs@example.invalid>
+---
+ src/input.cpp | 25 +++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/src/input.cpp b/src/input.cpp
+index 1111111..2222222 100644
+--- a/src/input.cpp
++++ b/src/input.cpp
+@@ -426,10 +426,17 @@ void restore_stdin(void) {
+ 
+ void toggle_screen(void) {
+     if( ! menu_active ) {
++        menu_active = true;
++        control_mode = GSMENU_CONTROL_MODE_NAV;
++
+         lv_scr_load(pp_menu_screen);
+         lv_indev_set_group(indev_drv,main_group);
++        if (main_group && lv_group_get_focused(main_group) == NULL) {
++            lv_group_focus_next(main_group);
++        }
++
+         lv_obj_invalidate(pp_menu_screen);
+-        menu_active = true;
++        lv_refr_now(NULL);
+     }
+ }
+ 
+@@ -558,15 +565,21 @@ static void virtual_keyboard_read(lv_indev_t * indev, lv_indev_data_t * data) {
+ #endif
+ 
+     if (next_key != LV_KEY_END) {
++        if (!menu_active && next_key != LV_KEY_ENTER) {
++            toggle_screen();
++            next_key = LV_KEY_END;
++            next_key_pressed = false;
++            key_sent = false;
++            data->state = LV_INDEV_STATE_REL;
++            return;
++        }
++
+         data->key = next_key;
+         data->state = next_key_pressed ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
+ 
+         next_key_pressed = !next_key_pressed;  // Toggle state
+ 
+-        if (next_key != LV_KEY_ENTER)
+-            toggle_screen();
+-
+-        if (!next_key_pressed) {  
++        if (!next_key_pressed) {
+             next_key = LV_KEY_END;  // Reset key after release event
+         }
+ 
+-- 
+2.39.5
+
