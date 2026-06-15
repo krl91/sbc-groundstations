@@ -121,6 +121,8 @@ cp /boot/rockchip/rk3566-radxa-zero-3w-aic8800ds2.dtb /mnt/ruby/usr/lib/linux-im
 reboot
 ```
 
+Fork of OpenIPC sbc-groundstation, unofficial version
+
 # CC Edition Maintained by @zhouruixi
 
 See the CC branch
