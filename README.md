@@ -1,3 +1,5 @@
+Fork of OpenIPC sbc-groundstation, unofficial version
+
 A unified OpenIPC ground station image builder using Buildroot 2.
 
 # Supported GS Hardware
